@@ -1,15 +1,36 @@
 import numbers
+from functools import wraps
+
+def make_other_expr(meth):
+    """Cast the second argument of a method to Number when needed."""
+    @wraps(meth)
+    def fn(self, other):
+        if isinstance(other, numbers.Number):
+            other = Number(other)
+        return meth(self, other)
+    return fn
 
 def postvisitor(expr, fn, **kwargs):
-    tree = expr
-    calcstack = []
-    newstack =[]
-    while expr.operands:
-        calcstack.append(expr.symbol[1])
-        expr = expr.operands
-        print("hi")
-        expr = []
+    newstack = [expr]
+    visited = {}
+    while len(newstack) > 0:
+        curr = newstack.pop()
+        unvisited = []
+        if isinstance(curr, Operator):
+            for elem in curr.operands:
+                if elem not in visited:
+                    unvisited.append(elem)
+        if len(unvisited) > 0:
+            newstack.append(curr)
+            for elem in unvisited:
+                newstack.append(elem)
+        else:
+            if isinstance(curr, Operator):
+                visited[curr] = fn(curr, *(visited[elem] for elem in curr.operands))
+            else:
+                visited[curr] = fn(curr, **kwargs)
     
+    return visited[expr]
 
 def ifnumber(value):
     if isinstance(value, numbers.Number):
@@ -21,8 +42,9 @@ class Expression:
     def __init__(self, *operands):
         self.operands = operands
 
+    @make_other_expr
     def __add__(self, value):
-        return Add(self, ifnumber(value))
+        return Add(self, value)
 
     def __sub__(self, value):
         return Sub(self, ifnumber(value))
@@ -107,8 +129,6 @@ class Symbol(Terminal):
     pass
 
 from functools import singledispatch
-import expressions
-
 
 @singledispatch
 def evaluate(expr, *o, **kwargs):
@@ -133,45 +153,100 @@ def evaluate(expr, *o, **kwargs):
         f"Cannot evaluate a {type(expr).__name__}")
 
 
-@evaluate.register(expressions.Number)
+@evaluate.register(Number)
 def _(expr, *o, **kwargs):
     return expr.value
 
 
-@evaluate.register(expressions.Symbol)
+@evaluate.register(Symbol)
 def _(expr, *o, symbol_map, **kwargs):
     return symbol_map[expr.value]
 
 
-@evaluate.register(expressions.Add)
+@evaluate.register(Add)
 def _(expr, *o, **kwargs):
     return o[0] + o[1]
 
 
-@evaluate.register(expressions.Sub)
+@evaluate.register(Sub)
 def _(expr, *o, **kwargs):
     return o[0] - o[1]
 
 
-@evaluate.register(expressions.Mul)
+@evaluate.register(Mul)
 def _(expr, *o, **kwargs):
     return o[0] * o[1]
 
 
-@evaluate.register(expressions.Div)
+@evaluate.register(Div)
 def _(expr, *o, **kwargs):
     return o[0] / o[1]
 
 
-@evaluate.register(expressions.Pow)
+@evaluate.register(Pow)
 def _(expr, *o, **kwargs):
     return o[0] ** o[1]
 
 
-x = Symbol('x')
+@singledispatch
+def differentiate(expr, var, *o, **kwargs):
+    """Differentiate!!"""
 
+    raise NotImplementedError(
+        f"Cannot evaluate a {type(expr).__name__}")
+
+
+@differentiate.register(Number)
+def _(expr, var, *o, **kwargs):
+    return Number(0)
+
+
+@differentiate.register(Symbol)
+def _(expr, var, *o, **kwargs):
+    if expr.value == var:
+        return Number(1)
+    else:
+        return Number(0)
+
+
+@differentiate.register(Add)
+def _(expr, var, *o, **kwargs):
+    curr = expr.operands
+    return differentiate(curr[0], var, **kwargs) + differentiate(curr[1], var, **kwargs)
+
+
+@differentiate.register(Sub)
+def _(expr, var, *o, **kwargs):
+    curr = expr.operands
+    return differentiate(curr[0], var, **kwargs) - differentiate(curr[1], var, **kwargs)
+
+
+@differentiate.register(Mul)
+def _(expr, var, *o, **kwargs):
+    curr = expr.operands
+    return curr[0]*differentiate(curr[1], var, **kwargs) + differentiate(curr[0], var, **kwargs)*curr[1]
+
+
+@differentiate.register(Div)
+def _(expr, var, *o, **kwargs):
+    return differentiate(o[0] * (o[1] ** (-1)), var, **kwargs)
+
+
+@differentiate.register(Pow)
+def _(expr, var, *o, **kwargs):
+    curr = expr.operands
+    if isinstance(curr[0], Expression):
+        if ((isinstance(curr[0], Symbol) and curr[0].value == var) or (isinstance(curr[0], Operator))):
+            return curr[1] * curr[0] ** (curr[1] - 1)
+        elif ((isinstance(curr[1], Symbol) and curr[1].value == var) or (isinstance(curr[1], Operator))):
+            raise NotImplementedError("Wth...")
+    else:
+        return curr[0] ** curr[1]
+
+
+x = Symbol('x')
 y = Symbol('y')
 
-expr = 3*x + 2**(y/5) - 1
+expr = x**5
 
-postvisitor(expr, evaluate, symbol_map={'x': 1.5, 'y': 10})
+print(differentiate(expr, 'x'))
